@@ -1,9 +1,10 @@
 var express=require('express'); //引入express模块
 
-
 var app=express();
 
 var fortune=require('./lib/fortune.js');//引入自定义fortune模块
+
+var credentials = require('./credentials.js');
 
 
 //引入handlerbars模板
@@ -19,6 +20,9 @@ var handlebars=require('express3-handlebars').create({
 });
 app.engine('handlebars',handlebars.engine);
 app.set('view engine','handlebars');
+
+app.use(require('cookie-parser')(credentials.cookieSecret));
+app.use(require('express-session')());
 
 app.set('port',process.env.PORT||3000);
 
@@ -54,6 +58,13 @@ function getWeatherData(){
     };
 }
 
+// for now, we're mocking NewsletterSignup:
+function NewsletterSignup(){
+}
+NewsletterSignup.prototype.save = function(cb){
+	cb();
+};
+
 //设置静态路径
 app.use(express.static(__dirname + '/public'));
 
@@ -65,6 +76,15 @@ app.use(function(req, res, next){
 
 //引入body-parser中间件
 app.use(require('body-parser')());
+
+// flash message middleware
+app.use(function(req, res, next){
+	// if there's a flash message, transfer
+	// it to the context, then clear it
+	res.locals.flash = req.session.flash;
+	delete req.session.flash;
+	next();
+});
 
 app.get('/',function(req,res){
     res.render('home');
@@ -108,12 +128,69 @@ app.get('/newsletter',function(req,res){
     res.render('newsletter',{csrf:'CSRF token goes here'});
 });
 
+//表单处理
+/*
 app.post('/process',function(req,res){
     console.log('Form(from querystring):'+req.query.form);
     console.log('CSRF token(from hidden form field):'+req.body._crsf);
     console.log('Name(form visible from field):'+req.body.name);
     console.log('Email(from visible from field):'+req.body.email);
     res.redirect(303,'/thank-you');
+});
+*/
+
+//AJAX表单输入
+app.get('/newsletterAJAX',function(req,res){
+    res.render('newsletterAJAX',{csrf:'CSRF token goes here'});
+});
+
+//AJAX表单处理
+app.post('/process',function(req,res){
+    console.log(req.xhr);
+    if(req.xhr||req.accepts('json,html')==='json'){
+        console.log('AJAX Success'),
+        res.send({success:true});
+    }else{
+        console.log('303'),
+        res.redirect(303,'/thank-you');
+    }
+});
+
+var VALID_EMAIL_REGEX = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
+
+app.post('/newsletterAJAX', function(req, res){
+	var name = req.body.name || '', email = req.body.email || '';
+	// input validation
+	if(!email.match(VALID_EMAIL_REGEX)) {
+		if(req.xhr) return res.json({ error: 'Invalid name email address.' });
+		req.session.flash = {
+			type: 'danger',
+			intro: 'Validation error!',
+			message: 'The email address you entered was  not valid.',
+		};
+		return res.redirect(303, '/newsletterAJAX/archive');
+	}
+	new NewsletterSignup({ name: name, email: email }).save(function(err){
+		if(err) {
+			if(req.xhr) return res.json({ error: 'Database error.' });
+			req.session.flash = {
+				type: 'danger',
+				intro: 'Database error!',
+				message: 'There was a database error; please try again later.',
+			};
+			return res.redirect(303, '/newsletterAJAX/archive');
+		}
+		if(req.xhr) return res.json({ success: true });
+		req.session.flash = {
+			type: 'success',
+			intro: 'Thank you!',
+			message: 'You have now been signed up for the newsletter.',
+		};
+		return res.redirect(303, '/newsletterAJAX/archive');
+	});
+});
+app.get('/newsletterAJAX/archive', function(req, res){
+	res.render('newsletterAJAX/archive');
 });
 
 
